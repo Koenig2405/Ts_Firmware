@@ -3,6 +3,7 @@
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
 #include <Encoder.h>
+#include <TimerOne.h> 		// Timer Bibliothek
 
 #define SCREEN_WIDTH 128 /*128 width of OLED in pixels*/
 #define SCREEN_HEIGHT 64 /*64 height of OLED in pixels*/
@@ -22,9 +23,9 @@ int prg_cnt = 0;
 
 enum FANSPEED
 {
-    low,
-    mid,
-    high
+    low = 33,
+    mid = 66,
+    high = 100
 };
 
 void showBoot(); 
@@ -105,6 +106,12 @@ int globalDuration = 30;
 bool setAlarm();
 bool globalAlarm = false;
 
+#define LUEFTER_PIN 9 		
+#define PWM_FREQUENZ 25000
+bool turnFanOn();
+bool fanFin;
+
+
 void displaySetup()
 {
     if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C))
@@ -129,6 +136,11 @@ void setup()
 
     pinMode(buzzer, OUTPUT);
     digitalWrite(buzzer, true);
+    
+    Timer1.initialize(1000000/PWM_FREQUENZ);	// Initialisierung des PWM Timers
+	Timer1.pwm(LUEFTER_PIN,0);			// PWM des Timers setzen, zunächst 0
+	pinMode(LUEFTER_PIN,OUTPUT);
+    Timer1.setPwmDuty(LUEFTER_PIN, map(0,0,100,0,1023));
 
 }
 
@@ -145,16 +157,26 @@ void loop()
         globalFanspeed = selectFanSpeed();
         enterState = false;
         prg_cnt = 2;
+        break;
 
     case 2:
         globalDuration = selectDuration();
         enterState = false;
         prg_cnt = 3;
+        break;
 
     case 3:
         globalAlarm = setAlarm();
         enterState = false;
+        prg_cnt = 4;
+        break;
+
+    case 4:
+        fanFin = turnFanOn();
+        enterState = false;
         prg_cnt = 1;
+
+
     
     default:
         break;
@@ -163,14 +185,16 @@ void loop()
 
 void enterInterrupt()
 {
-    enterState = true;
-    digitalWrite(buzzer, false);
-    Serial.println("Interrupt:: Button pressed!");
-    
-    delay(1000);
+    delay(150);
+    if(digitalRead(EncSW) == false)
+    {
+        enterState = true;
+        digitalWrite(buzzer, false);
+        Serial.println("Interrupt:: Button pressed!");
+        delay(500);
+        digitalWrite(buzzer, true);
+    }
     EIFR = (0b11 << INTF0);
-    digitalWrite(buzzer, true);
-    delay(2000);
 }
 
 void showBoot()
@@ -178,7 +202,7 @@ void showBoot()
     display.drawBitmap(0, 0, bootScreen, 128, 64, WHITE);
     display.display();
     Serial.println("BootScreen:: BootScreen");
-    delay(5000);
+    delay(1000);
 
     /*digitalWrite(buzzer, false);  //Bootup Sound
     delay(200);
@@ -213,7 +237,9 @@ FANSPEED selectFanSpeed()
                 Serial.println("FanSpeed:: Niedrig");
 
                 display.clearDisplay(); 
-                display.setCursor(25, 24);
+                display.setCursor(35, 12);
+                display.println("STUFE:");
+                display.setCursor(25, 36);
                 display.println("Niedrig");
                 display.display();
                 fanSpeed = low;
@@ -223,8 +249,10 @@ FANSPEED selectFanSpeed()
             case -1:    //because of negative Values
                 Serial.println("FanSpeed:: Mittel");
 
-                display.clearDisplay(); 
-                display.setCursor(32, 24);
+                display.clearDisplay();
+                display.setCursor(35, 12);
+                display.println("STUFE:"); 
+                display.setCursor(32, 36);
                 display.println("Mittel");
                 display.display();
                 fanSpeed = mid;
@@ -235,7 +263,9 @@ FANSPEED selectFanSpeed()
                 Serial.println("FanSpeed:: Hoch");
 
                 display.clearDisplay(); 
-                display.setCursor(42, 24);
+                display.setCursor(35, 12);
+                display.println("STUFE:");
+                display.setCursor(42, 36);
                 display.println("Hoch");
                 display.display();
                 fanSpeed = high;
@@ -256,7 +286,7 @@ FANSPEED selectFanSpeed()
 
 int selectDuration()
 {
-    myEnc.write(-4);
+    myEnc.write(-48);
     long newPosition;
 
     while (true)
@@ -279,17 +309,22 @@ int selectDuration()
 
             Serial.print("Duration:: ");
             Serial.println(newPosition);
-            display.clearDisplay();   
+            display.clearDisplay(); 
+
+            display.setCursor(35, 12);
+            display.println("DAUER:");
+              
             if(newPosition < 100)
             {
-                display.setCursor(53, 24);
+                display.setCursor(34, 36);
             }
             else
             {
-                display.setCursor(47, 24);
+                display.setCursor(26, 36);
             }
 
-            display.println(newPosition);
+            display.print(newPosition);
+            display.println(" min");
             display.display();
         }
         
@@ -313,7 +348,7 @@ bool setAlarm()
 
          if (newPosition != oldPosition)
         {
-            Serial.println(newPosition);
+            //Serial.println(newPosition);
             oldPosition = newPosition;
             switch (newPosition)
             {
@@ -321,7 +356,9 @@ bool setAlarm()
                 Serial.println("ALARM:: OFF");
 
                 display.clearDisplay();
-                display.setCursor(50, 24);
+                display.setCursor(35, 12);
+                display.println("ALARM:");
+                display.setCursor(50, 36);
                 display.println("OFF");
                 display.display();
                 alarm = false;
@@ -331,7 +368,9 @@ bool setAlarm()
             case 0: //because of negative Values
                 Serial.println("Alarm:: ON");
                 display.clearDisplay(); 
-                display.setCursor(55, 24);
+                display.setCursor(35, 12);
+                display.println("ALARM:");
+                display.setCursor(55, 36);
                 display.println("ON");
                 display.display();
                 alarm = true;
@@ -345,6 +384,53 @@ bool setAlarm()
         {
             oldPosition = -999;
             return alarm;
+        }
+    }
+}
+
+bool turnFanOn()
+{
+    /*Timer1.setPwmDuty(LUEFTER_PIN, map(100,0,100,0,1023));
+    Serial.println("turnFanOn::Fan spinning 100%");
+    delay(5000);
+    Timer1.setPwmDuty(LUEFTER_PIN, map(0,0,100,0,1023));
+    Serial.println("turnFanOn::Fan spinning 0%");*/
+
+    //long myTimer = millis();
+    //long myTimeOut = globalDuration * 60 * 1000;
+    //long myTimeOut = globalDuration * 10;
+
+    Serial.print("turnFanOn::GlobalDuration = ");
+    Serial.println(globalDuration * 10);
+
+    Timer1.setPwmDuty(LUEFTER_PIN, map(globalFanspeed,0,100,0,1023));
+                
+    display.clearDisplay();
+    display.setCursor(28, 24);
+    display.println("Drying");
+    display.display();
+
+    delay(globalDuration * 60 * 10000);
+    Timer1.setPwmDuty(LUEFTER_PIN, map(0,0,100,0,1023));
+
+    display.clearDisplay();
+    display.setCursor(14, 24);
+    display.println("Finished!");
+    display.display();
+
+    while(true)
+    {
+        if((globalAlarm == true) && !enterState)
+        {
+            digitalWrite(buzzer, false);
+            delay(200);
+            digitalWrite(buzzer, true);
+            delay(500);
+        }
+
+        if(enterState == true)
+        {
+            return true;
         }
     }
 }
